@@ -1,4 +1,4 @@
-# JSON connect - Community Connector for Data Studio
+# Fork of JSON connect - Community Connector for Data Studio
 
 *This is not an official Google product*
 
