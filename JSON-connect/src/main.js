@@ -74,6 +74,46 @@ function getConfig(request) {
     .newOptionBuilder()
     .setLabel('Inline')
     .setValue('inline');
+  
+  var vms = config
+    .newOptionBuilder()
+    .setLabel('VMs')
+    .setValue('/v1/user-resource/vm/all?status=running&status=stopped');
+  
+  var containers = config
+    .newOptionBuilder()
+    .setLabel('Containers')
+    .setValue('/v1/container/admin/groups');
+  
+  var users = config
+    .newOptionBuilder()
+    .setLabel('Users')
+    .setValue('/v1/user-resource/user/all');  
+  
+  var buckets = config
+    .newOptionBuilder()
+    .setLabel('S3 Buckets')
+    .setValue('/v1/storage/admin/buckets');
+  
+  var billingaccounts = config
+    .newOptionBuilder()
+    .setLabel('Billing Accounts')
+    .setValue('/v1/payment/billing_account/all');
+  
+  var invoices = config
+    .newOptionBuilder()
+    .setLabel('Invoices')
+    .setValue('/v1/payment/admin/invoices');
+  
+  var invoice_totals = config
+    .newOptionBuilder()
+    .setLabel('Invoice Totals')
+    .setValue('/v1/payment/admin/invoice_totals');
+  
+  var hosts = config
+    .newOptionBuilder()
+    .setLabel('Hosts')
+    .setValue('/v1/base-operator/host/list');
 
   config
     .newInfo()
@@ -83,10 +123,33 @@ function getConfig(request) {
   config
     .newTextInput()
     .setId('url')
-    .setName('Enter the URL of a JSON data source')
-    .setHelpText('e.g. https://my-url.org/json')
-    .setPlaceholder('https://my-url.org/json');
+    .setName('Enter the API URL')
+    .setHelpText('e.g. https://my-url.org')
+    .setPlaceholder('https://my-url.org');
+  
 
+   config
+    .newSelectSingle()
+    .setId('datasource')
+    .setName('Data Source')
+    .setHelpText('Select admin data source')
+    .setAllowOverride(true)
+    .addOption(vms)
+    .addOption(containers)
+    .addOption(users)
+    .addOption(buckets)
+    .addOption(billingaccounts)
+    .addOption(invoices)
+    .addOption(hosts)
+    .addOption(invoice_totals);
+  
+  config
+    .newTextInput()
+    .setId('apikey')
+    .setName('Enter your api key')
+    .setHelpText('e.g. asasdfasdfasdfasdfasdf')
+    .setPlaceholder('asdfasdfasdfasdfasdfasdf');
+/*
   config
     .newCheckbox()
     .setId('cache')
@@ -102,7 +165,7 @@ function getConfig(request) {
     .setAllowOverride(true)
     .addOption(option1)
     .addOption(option2);
-
+*/
   config.setDateRangeRequired(false);
 
   return config.build();
@@ -114,9 +177,16 @@ function getConfig(request) {
  * @param   {string} url  The URL to get the data from
  * @returns {Object}      The response object
  */
-function fetchJSON(url) {
+function fetchJSON(url,apikey) {
+  
+ var fetchOptions = {
+    headers: {
+      apikey: ''+apikey,
+    }
+  };
+  
   try {
-    var response = UrlFetchApp.fetch(url);
+    var response = UrlFetchApp.fetch(url, fetchOptions);
   } catch (e) {
     sendUserError('"' + url + '" returned an error:' + e);
   }
@@ -137,7 +207,7 @@ function fetchJSON(url) {
  * @param   {string} url  The URL to get the data from
  * @returns {Object}      The response object
  */
-function getCachedData(url) {
+function getCachedData(url,datasource,apikey) {
   var cacheExpTime = 600;
   var cache = CacheService.getUserCache();
   var cacheKey = url.replace(/[^a-zA-Z0-9]+/g, '');
@@ -155,7 +225,7 @@ function getCachedData(url) {
       }
     }
   } else {
-    content = fetchJSON(url);
+    content = fetchJSON(url,datasource,apikey);
 
     for (var key in content) {
       cacheData[cacheKey + '.' + key] = JSON.stringify(content[key]);
@@ -175,15 +245,15 @@ function getCachedData(url) {
  * @param   {Boolean} cache Parameter to determine whether the request should be cached
  * @returns {Object}        The response object
  */
-function fetchData(url, cache) {
+function fetchData(url, cache, apikey) {
   if (!url || !url.match(/^https?:\/\/.+$/g)) {
     sendUserError('"' + url + '" is not a valid url.');
   }
   try {
-    var content = cache ? getCachedData(url) : fetchJSON(url);
+    var content = cache ? getCachedData(url,cache,apikey) : fetchJSON(url,apikey);
   } catch (e) {
     sendUserError(
-      'Your request could not be cached. The rows of your dataset probably exceed the 100KB cache limit.'
+      'Your request could not be cached. The rows of your dataset probably exceed the 100KB cache limit. Or we could not connect to API. '+e
     );
   }
   if (!content) sendUserError('"' + url + '" returned no content.');
@@ -216,6 +286,7 @@ function getSemanticType(value, types) {
       return types.YEAR_MONTH_DAY_HOUR;
     }
   }
+  
   return types.TEXT;
 }
 
@@ -291,8 +362,9 @@ function getFields(request, content) {
   var fields = cc.getFields();
   var types = cc.FieldType;
   var aggregations = cc.AggregationType;
-  var isInline = request.configParams.nestedData === 'inline';
-
+  //var isInline = request.configParams.nestedData === 'inline';
+  var isInline = 'inline';
+  
   if (!Array.isArray(content)) content = [content];
 
   if (typeof content[0] !== 'object' || content[0] === null) {
@@ -313,7 +385,8 @@ function getFields(request, content) {
  * @returns {Object} Schema for the given request.
  */
 function getSchema(request) {
-  var content = fetchData(request.configParams.url, request.configParams.cache);
+  var url = request.configParams.url + request.configParams.datasource;
+  var content = fetchData(url, request.configParams.cache, request.configParams.apikey);
   var fields = getFields(request, content).build();
   return {schema: fields};
 }
@@ -337,6 +410,7 @@ function mergeDeep() {
 
       if (Array.isArray(pVal) && Array.isArray(oVal)) {
         prev[key] = pVal.concat.apply(pVal, toConsumableArray(oVal));
+
       } else if (pVal === Object(pVal) && oVal === Object(oVal)) {
         prev[key] = mergeDeep(pVal, oVal);
       } else {
@@ -448,7 +522,8 @@ function getColumns(content, requestedFields) {
  * @returns {Object}          Contains the schema and data for the given request.
  */
 function getData(request) {
-  var content = fetchData(request.configParams.url, request.configParams.cache);
+  var url = request.configParams.url + request.configParams.datasource;
+  var content = fetchData(url, request.configParams.cache, request.configParams.apikey);
   var fields = getFields(request, content);
   var requestedFieldIds = request.fields.map(function(field) {
     return field.name;
